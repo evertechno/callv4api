@@ -258,8 +258,8 @@ def authenticate():
             # Provide alternative URLs to try
             st.markdown("### 🔄 Alternative URL Formats to Try")
             st.code(f"{BASE_URL}/enboxes")
-            st.code("https://vwhxcuylitpawxjplfnq.supabase.co/functions/v1/msp-gateway")
-            st.code("https://vwhxcuylitpawxjplfnq.functions.supabase.co/msp-gateway/enboxes")
+            st.code("https://plsyktpjiihgrnidisve.supabase.co/functions/v1/msp-gateway")
+            st.code("https://plsyktpjiihgrnidisve.functions.supabase.co/msp-gateway/enboxes")
             
         else:
             st.session_state.api_key = api_key
