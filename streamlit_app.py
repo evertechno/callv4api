@@ -79,15 +79,22 @@ class MSPAPIClient:
         except requests.exceptions.RequestException as e:
             return None, str(e)
     
-    def create_enbox(self, email, password, display_name, create_via="direct"):
-        """Create a new Enbox"""
+    def create_enbox(self, email, password=None, display_name=None, create_via="direct"):
+        """Create a new Enbox - either direct (with password) or invite (without password)"""
         try:
             payload = {
                 "email": email,
-                "password": password,
-                "display_name": display_name,
                 "create_via": create_via
             }
+            
+            if create_via == "direct":
+                if not password:
+                    return None, "Password is required for direct creation"
+                payload["password"] = password
+            
+            if display_name:
+                payload["display_name"] = display_name
+            
             response = requests.post(
                 f"{BASE_URL}/enboxes",
                 headers=self.headers,
@@ -110,24 +117,47 @@ class MSPAPIClient:
         except requests.exceptions.RequestException as e:
             return None, str(e)
     
-    def update_enbox(self, enbox_id, update_data):
-        """Update an Enbox"""
+    def activate_enbox(self, enbox_id):
+        """Activate an Enbox"""
         try:
-            response = requests.put(
-                f"{BASE_URL}/enboxes/{enbox_id}",
-                headers=self.headers,
-                json=update_data
+            response = requests.post(
+                f"{BASE_URL}/enboxes/{enbox_id}/activate",
+                headers=self.headers
             )
             response.raise_for_status()
             return response.json(), None
         except requests.exceptions.RequestException as e:
             return None, str(e)
     
-    def delete_enbox(self, enbox_id):
-        """Delete an Enbox"""
+    def deactivate_enbox(self, enbox_id):
+        """Deactivate an Enbox"""
         try:
-            response = requests.delete(
-                f"{BASE_URL}/enboxes/{enbox_id}",
+            response = requests.post(
+                f"{BASE_URL}/enboxes/{enbox_id}/deactivate",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            return response.json(), None
+        except requests.exceptions.RequestException as e:
+            return None, str(e)
+    
+    def get_stats(self):
+        """Get MSP dashboard statistics"""
+        try:
+            response = requests.get(
+                f"{BASE_URL}/stats",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            return response.json(), None
+        except requests.exceptions.RequestException as e:
+            return None, str(e)
+    
+    def get_usage(self):
+        """Get API usage statistics"""
+        try:
+            response = requests.get(
+                f"{BASE_URL}/usage",
                 headers=self.headers
             )
             response.raise_for_status()
@@ -182,9 +212,9 @@ def display_enboxes_list(client):
     """Display list of all Enboxes"""
     st.markdown('<div class="section-header">📦 Enboxes</div>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 2, 1])
     
-    with col2:
+    with col3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.session_state.enboxes_data = None
     
@@ -201,28 +231,41 @@ def display_enboxes_list(client):
     
     data = st.session_state.enboxes_data
     
-    if not data or len(data) == 0:
+    # Extract enboxes array from response
+    enboxes = data.get('enboxes', []) if isinstance(data, dict) else data
+    count = data.get('count', len(enboxes)) if isinstance(data, dict) else len(enboxes)
+    
+    if not enboxes or len(enboxes) == 0:
         st.info("No Enboxes found. Create your first one below!")
         return
     
-    # Display count
-    st.metric("Total Enboxes", len(data))
+    # Display stats
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Enboxes", count)
+    with col2:
+        active_count = sum(1 for e in enboxes if e.get("is_active", True))
+        st.metric("Active", active_count)
+    with col3:
+        inactive_count = count - active_count
+        st.metric("Inactive", inactive_count)
     
     # Convert to DataFrame for better display
     df_data = []
-    for enbox in data:
+    for enbox in enboxes:
         df_data.append({
             "ID": enbox.get("id", "N/A"),
-            "Email": enbox.get("email", "N/A"),
+            "Rsync ID": enbox.get("enbox_rsync_id", "N/A"),
             "Display Name": enbox.get("display_name", "N/A"),
-            "Created Via": enbox.get("create_via", "N/A"),
-            "Created At": enbox.get("created_at", "N/A")
+            "Created Via": enbox.get("created_via", "N/A"),
+            "Status": "🟢 Active" if enbox.get("is_active", True) else "🔴 Inactive",
+            "Created At": enbox.get("created_at", "N/A")[:10] if enbox.get("created_at") else "N/A"
         })
     
     df = pd.DataFrame(df_data)
     
     # Search functionality
-    search_term = st.text_input("🔍 Search Enboxes", placeholder="Search by email, name, or ID...")
+    search_term = st.text_input("🔍 Search Enboxes", placeholder="Search by ID, name, or rsync ID...")
     
     if search_term:
         mask = df.astype(str).apply(lambda x: x.str.contains(search_term, case=False, na=False)).any(axis=1)
@@ -239,18 +282,28 @@ def display_enboxes_list(client):
     with st.expander("📋 View Detailed JSON"):
         selected_id = st.selectbox(
             "Select Enbox to view details",
-            options=[enbox.get("id") for enbox in data],
-            format_func=lambda x: f"{x} - {next((e.get('email') for e in data if e.get('id') == x), 'N/A')}"
+            options=[enbox.get("id") for enbox in enboxes],
+            format_func=lambda x: f"{x} - {next((e.get('display_name', 'N/A') for e in enboxes if e.get('id') == x), 'N/A')}"
         )
         
         if selected_id:
-            selected_enbox = next((e for e in data if e.get("id") == selected_id), None)
+            selected_enbox = next((e for e in enboxes if e.get("id") == selected_id), None)
             if selected_enbox:
                 st.json(selected_enbox)
 
 def create_enbox_form(client):
     """Form to create a new Enbox"""
     st.markdown('<div class="section-header">➕ Create New Enbox</div>', unsafe_allow_html=True)
+    
+    # Choose creation method
+    create_method = st.radio(
+        "Creation Method",
+        options=["direct", "invite"],
+        format_func=lambda x: "Direct (with password)" if x == "direct" else "Invite Link (user sets password)",
+        horizontal=True
+    )
+    
+    st.markdown("---")
     
     with st.form("create_enbox_form"):
         col1, col2 = st.columns(2)
@@ -262,42 +315,149 @@ def create_enbox_form(client):
                 help="Customer's email address"
             )
             display_name = st.text_input(
-                "Display Name *",
-                placeholder="Customer Name",
+                "Display Name",
+                placeholder="Customer Name (optional)",
                 help="Customer's display name"
             )
         
         with col2:
-            password = st.text_input(
-                "Password *",
-                type="password",
-                placeholder="Secure password",
-                help="Secure password for the Enbox"
-            )
-            create_via = st.selectbox(
-                "Create Via",
-                options=["direct", "api", "portal"],
-                help="Method of creation"
-            )
+            if create_method == "direct":
+                password = st.text_input(
+                    "Password *",
+                    type="password",
+                    placeholder="Minimum 6 characters",
+                    help="Secure password for the Enbox"
+                )
+                st.info("💡 Direct creation: User account is created immediately with the provided password.")
+            else:
+                password = None
+                st.info("💡 Invite creation: An invite link will be generated. User sets their own password when accepting the invite.")
         
         submitted = st.form_submit_button("Create Enbox", type="primary", use_container_width=True)
         
         if submitted:
-            if not email or not password or not display_name:
-                st.markdown('<div class="error-box">❌ Please fill in all required fields</div>', unsafe_allow_html=True)
+            if not email:
+                st.markdown('<div class="error-box">❌ Email is required</div>', unsafe_allow_html=True)
             elif "@" not in email:
                 st.markdown('<div class="error-box">❌ Please enter a valid email address</div>', unsafe_allow_html=True)
+            elif create_method == "direct" and not password:
+                st.markdown('<div class="error-box">❌ Password is required for direct creation</div>', unsafe_allow_html=True)
+            elif create_method == "direct" and len(password) < 6:
+                st.markdown('<div class="error-box">❌ Password must be at least 6 characters</div>', unsafe_allow_html=True)
             else:
                 with st.spinner("Creating Enbox..."):
-                    result, error = client.create_enbox(email, password, display_name, create_via)
+                    result, error = client.create_enbox(
+                        email=email,
+                        password=password,
+                        display_name=display_name if display_name else None,
+                        create_via=create_method
+                    )
                     
                     if error:
                         st.markdown(f'<div class="error-box">❌ Error creating Enbox: {error}</div>', unsafe_allow_html=True)
                     else:
                         st.markdown('<div class="success-box">✅ Enbox created successfully!</div>', unsafe_allow_html=True)
-                        st.json(result)
+                        
+                        # Show different info based on creation method
+                        if create_method == "invite":
+                            st.markdown("### 📧 Invite Details")
+                            invite_link = result.get('invite_link', 'N/A')
+                            invite_token = result.get('invite_token', 'N/A')
+                            expires_at = result.get('invite_expires_at', 'N/A')
+                            
+                            st.code(invite_link, language=None)
+                            st.caption(f"Invite Token: {invite_token}")
+                            st.caption(f"Expires: {expires_at[:10] if expires_at != 'N/A' else 'N/A'}")
+                            st.info("📋 Copy this link and send it to the user. They will set their password when accepting the invite.")
+                        
+                        with st.expander("📋 Full Response"):
+                            st.json(result)
+                        
                         st.session_state.enboxes_data = None  # Clear cache to refresh list
                         st.balloons()
+
+def display_statistics(client):
+    """Display MSP statistics and usage"""
+    st.markdown('<div class="section-header">📊 Statistics & Usage</div>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 Refresh Stats", use_container_width=True):
+            pass  # Will refresh on rerun
+    
+    # Fetch stats
+    with st.spinner("Loading statistics..."):
+        stats_data, stats_error = client.get_stats()
+        usage_data, usage_error = client.get_usage()
+    
+    if stats_error:
+        st.markdown(f'<div class="error-box">❌ Error loading stats: {stats_error}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown("### 📦 Enbox Statistics")
+        
+        stats = stats_data.get('stats', {})
+        rate_limit = stats_data.get('rate_limit', {})
+        
+        # Display metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Enboxes", stats.get('total_enboxes', 0))
+        with col2:
+            st.metric("Active Enboxes", stats.get('active_enboxes', 0))
+        with col3:
+            st.metric("Inactive Enboxes", stats.get('inactive_enboxes', 0))
+        with col4:
+            st.metric("API Calls (24h)", stats.get('api_calls_24h', 0))
+        
+        # Rate limit info
+        st.markdown("---")
+        st.markdown("### ⚡ Rate Limit Status")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            remaining = rate_limit.get('remaining', 0)
+            st.metric("Requests Remaining", remaining)
+        with col2:
+            reset_at = rate_limit.get('reset_at', 'N/A')
+            if reset_at != 'N/A':
+                reset_time = reset_at.split('T')[1][:8] if 'T' in reset_at else reset_at
+                st.metric("Resets At", reset_time)
+    
+    if usage_error:
+        st.markdown(f'<div class="error-box">❌ Error loading usage: {usage_error}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown("---")
+        st.markdown("### 📈 API Usage (Last 24 Hours)")
+        
+        usage_stats = usage_data.get('usage', {})
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### By Action")
+            by_action = usage_stats.get('by_action', {})
+            if by_action:
+                action_df = pd.DataFrame([
+                    {"Action": k, "Count": v} for k, v in by_action.items()
+                ]).sort_values('Count', ascending=False)
+                st.dataframe(action_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No API calls in the last 24 hours")
+        
+        with col2:
+            st.markdown("#### By Status Code")
+            by_status = usage_stats.get('by_status', {})
+            if by_status:
+                status_df = pd.DataFrame([
+                    {"Status Code": k, "Count": v} for k, v in by_status.items()
+                ]).sort_values('Count', ascending=False)
+                st.dataframe(status_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No API calls in the last 24 hours")
+        
+        # Total requests
+        st.metric("Total Requests (24h)", usage_stats.get('total_requests_24h', 0))
 
 def manage_enbox(client):
     """Manage individual Enbox"""
@@ -310,71 +470,111 @@ def manage_enbox(client):
         st.warning("No Enboxes available to manage. Create one first!")
         return
     
+    enboxes = data.get('enboxes', []) if isinstance(data, dict) else data
+    
+    if not enboxes or len(enboxes) == 0:
+        st.warning("No Enboxes available to manage. Create one first!")
+        return
+    
     selected_id = st.selectbox(
         "Select Enbox to manage",
-        options=[enbox.get("id") for enbox in data],
-        format_func=lambda x: f"{next((e.get('email') for e in data if e.get('id') == x), 'N/A')} ({x})"
+        options=[enbox.get("id") for enbox in enboxes],
+        format_func=lambda x: f"{next((e.get('display_name', 'N/A') for e in enboxes if e.get('id') == x), 'N/A')} ({x[:8]}...)"
     )
     
     if not selected_id:
         return
     
-    tab1, tab2, tab3 = st.tabs(["📄 View Details", "✏️ Update", "🗑️ Delete"])
+    # Get selected enbox details
+    selected_enbox = next((e for e in enboxes if e.get("id") == selected_id), None)
+    is_active = selected_enbox.get("is_active", True) if selected_enbox else True
+    
+    tab1, tab2 = st.tabs(["📄 View Details", "⚙️ Activate/Deactivate"])
     
     with tab1:
-        if st.button("Fetch Details", type="primary"):
+        st.markdown("### Enbox Information")
+        
+        if st.button("🔄 Refresh Details", type="primary"):
             with st.spinner("Loading details..."):
                 result, error = client.get_enbox(selected_id)
                 
                 if error:
                     st.markdown(f'<div class="error-box">❌ Error: {error}</div>', unsafe_allow_html=True)
                 else:
-                    st.json(result)
+                    enbox_detail = result.get('enbox', result)
+                    
+                    # Display key information
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Enbox ID", enbox_detail.get("id", "N/A")[:16] + "...")
+                        st.metric("Display Name", enbox_detail.get("display_name", "N/A"))
+                        st.metric("Created Via", enbox_detail.get("created_via", "N/A"))
+                    with col2:
+                        st.metric("Rsync ID", enbox_detail.get("enbox_rsync_id", "N/A"))
+                        status = "🟢 Active" if enbox_detail.get("is_active", True) else "🔴 Inactive"
+                        st.metric("Status", status)
+                        created = enbox_detail.get("created_at", "N/A")
+                        st.metric("Created", created[:10] if created != "N/A" else "N/A")
+                    
+                    # Show invite info if exists
+                    if enbox_detail.get("invite_token"):
+                        st.markdown("---")
+                        st.markdown("### 📧 Invite Information")
+                        st.info(f"Invite Token: {enbox_detail.get('invite_token', 'N/A')}")
+                        if enbox_detail.get("invite_expires_at"):
+                            expires = enbox_detail.get("invite_expires_at", "")
+                            st.caption(f"Expires: {expires[:10] if expires else 'N/A'}")
+                    
+                    st.markdown("---")
+                    with st.expander("📋 Full JSON Response"):
+                        st.json(enbox_detail)
     
     with tab2:
-        st.info("Update Enbox information")
+        st.markdown("### Status Management")
         
-        with st.form("update_enbox_form"):
-            new_display_name = st.text_input("New Display Name", placeholder="Leave empty to keep current")
-            new_email = st.text_input("New Email", placeholder="Leave empty to keep current")
-            
-            update_submitted = st.form_submit_button("Update Enbox", type="primary")
-            
-            if update_submitted:
-                update_data = {}
-                if new_display_name:
-                    update_data["display_name"] = new_display_name
-                if new_email:
-                    update_data["email"] = new_email
+        # Show current status
+        status_col1, status_col2 = st.columns([1, 2])
+        with status_col1:
+            current_status = "🟢 Active" if is_active else "🔴 Inactive"
+            st.metric("Current Status", current_status)
+        
+        st.markdown("---")
+        
+        # Activation/Deactivation buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Activate Enbox")
+            st.info("Enable this Enbox to allow access and operations.")
+            if st.button("✅ Activate", type="primary", disabled=is_active, use_container_width=True):
+                with st.spinner("Activating..."):
+                    result, error = client.activate_enbox(selected_id)
+                    
+                    if error:
+                        st.markdown(f'<div class="error-box">❌ Error: {error}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="success-box">✅ Enbox activated successfully!</div>', unsafe_allow_html=True)
+                        st.json(result)
+                        st.session_state.enboxes_data = None
+                        st.rerun()
+        
+        with col2:
+            st.markdown("#### Deactivate Enbox")
+            st.warning("Disable this Enbox to restrict access and operations.")
+            if st.button("🔴 Deactivate", type="secondary", disabled=not is_active, use_container_width=True):
+                confirm = st.checkbox("I confirm I want to deactivate this Enbox", key="deactivate_confirm")
                 
-                if update_data:
-                    with st.spinner("Updating..."):
-                        result, error = client.update_enbox(selected_id, update_data)
+                if confirm and st.button("Confirm Deactivation", type="primary"):
+                    with st.spinner("Deactivating..."):
+                        result, error = client.deactivate_enbox(selected_id)
                         
                         if error:
                             st.markdown(f'<div class="error-box">❌ Error: {error}</div>', unsafe_allow_html=True)
                         else:
-                            st.markdown('<div class="success-box">✅ Enbox updated successfully!</div>', unsafe_allow_html=True)
+                            st.markdown('<div class="success-box">✅ Enbox deactivated successfully!</div>', unsafe_allow_html=True)
                             st.json(result)
                             st.session_state.enboxes_data = None
-                else:
-                    st.warning("Please provide at least one field to update")
-    
-    with tab3:
-        st.warning("⚠️ This action cannot be undone!")
-        
-        confirm = st.checkbox("I confirm I want to delete this Enbox")
-        
-        if st.button("Delete Enbox", type="primary", disabled=not confirm):
-            with st.spinner("Deleting..."):
-                result, error = client.delete_enbox(selected_id)
-                
-                if error:
-                    st.markdown(f'<div class="error-box">❌ Error: {error}</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="success-box">✅ Enbox deleted successfully!</div>', unsafe_allow_html=True)
-                    st.session_state.enboxes_data = None
-                    st.rerun()
+                            st.rerun()
 
 def main():
     """Main application"""
@@ -400,7 +600,7 @@ def main():
         st.markdown("### 📚 Navigation")
         page = st.radio(
             "Select Page",
-            ["Dashboard", "Create Enbox", "Manage Enbox"],
+            ["Dashboard", "Create Enbox", "Manage Enbox", "Statistics"],
             label_visibility="collapsed"
         )
         
@@ -421,6 +621,8 @@ def main():
         create_enbox_form(client)
     elif page == "Manage Enbox":
         manage_enbox(client)
+    elif page == "Statistics":
+        display_statistics(client)
 
 if __name__ == "__main__":
     main()
