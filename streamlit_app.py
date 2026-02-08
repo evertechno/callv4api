@@ -145,51 +145,38 @@ def init_session_state():
         st.session_state.enboxes_data = None
 
 def authenticate():
-    """Handle API key authentication"""
+    """Handle API key authentication from Streamlit secrets only"""
     st.markdown('<div class="main-header">🔐 MSP API Manager</div>', unsafe_allow_html=True)
     
-    st.markdown('<div class="info-box">Enter your MSP API key to manage customer Enboxes</div>', unsafe_allow_html=True)
-    
-    # Try to get API key from secrets first
-    api_key_from_secrets = None
+    # Get API key from secrets only
     try:
-        api_key_from_secrets = st.secrets.get("msp_api_key")
-    except:
-        pass
-    
-    if api_key_from_secrets:
-        st.info("API key loaded from secrets")
-        api_key = api_key_from_secrets
-        if st.button("Use API Key from Secrets", type="primary"):
+        api_key = st.secrets["msp_api_key"]
+        
+        # Test the API key
+        client = MSPAPIClient(api_key)
+        data, error = client.get_enboxes()
+        
+        if error:
+            st.markdown(f'<div class="error-box">❌ Authentication failed: {error}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-box">Please check your API key in Streamlit secrets configuration.</div>', unsafe_allow_html=True)
+        else:
             st.session_state.api_key = api_key
             st.session_state.authenticated = True
             st.rerun()
-    
-    st.markdown("---")
-    st.subheader("Or enter API key manually:")
-    
-    api_key_input = st.text_input(
-        "MSP API Key",
-        type="password",
-        placeholder="msp_your_key_here",
-        help="Enter your MSP API key. It should start with 'msp_'"
-    )
-    
-    if st.button("Connect", type="primary"):
-        if api_key_input and api_key_input.startswith("msp_"):
-            # Test the API key
-            client = MSPAPIClient(api_key_input)
-            data, error = client.get_enboxes()
             
-            if error:
-                st.markdown(f'<div class="error-box">❌ Authentication failed: {error}</div>', unsafe_allow_html=True)
-            else:
-                st.session_state.api_key = api_key_input
-                st.session_state.authenticated = True
-                st.success("✅ Successfully authenticated!")
-                st.rerun()
-        else:
-            st.markdown('<div class="error-box">❌ Please enter a valid API key (must start with "msp_")</div>', unsafe_allow_html=True)
+    except KeyError:
+        st.markdown('<div class="error-box">❌ API key not found in Streamlit secrets</div>', unsafe_allow_html=True)
+        st.markdown("""
+            <div class="info-box">
+            <strong>Setup Instructions:</strong><br><br>
+            Add your MSP API key to Streamlit secrets:<br><br>
+            1. Create <code>.streamlit/secrets.toml</code> file<br>
+            2. Add: <code>msp_api_key = "msp_your_key_here"</code><br>
+            3. Restart the application
+            </div>
+        """, unsafe_allow_html=True)
+    except Exception as e:
+        st.markdown(f'<div class="error-box">❌ Error loading secrets: {str(e)}</div>', unsafe_allow_html=True)
 
 def display_enboxes_list(client):
     """Display list of all Enboxes"""
