@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # API Configuration
-BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/msp-gateway"
+BASE_URL = "https://vwhxcuylitpawxjplfnq.supabase.co/functions/v1/msp-gateway"
 
 class MSPAPIClient:
     """Client for MSP API operations"""
@@ -258,8 +258,8 @@ def authenticate():
             # Provide alternative URLs to try
             st.markdown("### 🔄 Alternative URL Formats to Try")
             st.code(f"{BASE_URL}/enboxes")
-            st.code("https://plsyktpjiihgrnidisve.supabase.co/functions/v1/msp-gateway")
-            st.code("https://plsyktpjiihgrnidisve.functions.supabase.co/msp-gateway/enboxes")
+            st.code("https://vwhxcuylitpawxjplfnq.supabase.co/functions/v1/msp-gateway")
+            st.code("https://vwhxcuylitpawxjplfnq.functions.supabase.co/msp-gateway/enboxes")
             
         else:
             st.session_state.api_key = api_key
@@ -434,14 +434,20 @@ def create_enbox_form(client):
                         # Show different info based on creation method
                         if create_method == "invite":
                             st.markdown("### 📧 Invite Details")
-                            invite_link = result.get('invite_link', 'N/A')
+                            invite_link = result.get('invite_link', '')
                             invite_token = result.get('invite_token', 'N/A')
                             expires_at = result.get('invite_expires_at', 'N/A')
                             
-                            st.code(invite_link, language=None)
+                            # Extract just the path if full URL is provided
+                            if invite_link and '/invite/' in invite_link:
+                                invite_path = '/invite/' + invite_link.split('/invite/')[-1]
+                            else:
+                                invite_path = f'/invite/{invite_token}' if invite_token != 'N/A' else 'N/A'
+                            
+                            st.code(invite_path, language=None)
                             st.caption(f"Invite Token: {invite_token}")
                             st.caption(f"Expires: {expires_at[:10] if expires_at != 'N/A' else 'N/A'}")
-                            st.info("📋 Copy this link and send it to the user. They will set their password when accepting the invite.")
+                            st.info("📋 Append this path to your frontend URL and send it to the user. They will set their password when accepting the invite.")
                         
                         with st.expander("📋 Full Response"):
                             st.json(result)
