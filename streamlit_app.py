@@ -56,6 +56,7 @@ st.markdown("""
 
 # API Configuration
 BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/msp-gateway"
+EMAIL_BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/api-gateway"
 
 class MSPAPIClient:
     """Client for MSP API operations"""
@@ -65,6 +66,10 @@ class MSPAPIClient:
         self.headers = {
             "Content-Type": "application/json",
             "x-msp-api-key": api_key
+        }
+        self.email_headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key
         }
     
     def test_connection(self):
@@ -203,6 +208,34 @@ class MSPAPIClient:
             return response.json(), None
         except requests.exceptions.RequestException as e:
             return None, str(e)
+    
+    def send_email(self, to, subject, body):
+        """Send an email via the API Gateway"""
+        try:
+            url = f"{EMAIL_BASE_URL}/emails"
+            payload = {
+                "to": to,
+                "subject": subject,
+                "body": body
+            }
+            
+            print(f"DEBUG: Sending email to: {url}")
+            print(f"DEBUG: Payload: {payload}")
+            
+            response = requests.post(
+                url,
+                headers=self.email_headers,
+                json=payload
+            )
+            
+            print(f"DEBUG: Response Status: {response.status_code}")
+            print(f"DEBUG: Response Text: {response.text}")
+            
+            response.raise_for_status()
+            return response.json(), None
+        except requests.exceptions.RequestException as e:
+            print(f"DEBUG: Email Exception: {type(e).__name__}: {str(e)}")
+            return None, str(e)
 
 def init_session_state():
     """Initialize session state variables"""
@@ -212,6 +245,8 @@ def init_session_state():
         st.session_state.authenticated = False
     if 'enboxes_data' not in st.session_state:
         st.session_state.enboxes_data = None
+    if 'sent_emails' not in st.session_state:
+        st.session_state.sent_emails = []
 
 def authenticate():
     """Handle API key authentication from Streamlit secrets only"""
@@ -455,6 +490,117 @@ def create_enbox_form(client):
                         st.session_state.enboxes_data = None  # Clear cache to refresh list
                         st.balloons()
 
+def send_email_form(client):
+    """Form to send emails"""
+    st.markdown('<div class="section-header">📧 Send Email</div>', unsafe_allow_html=True)
+    
+    st.info("💡 Send emails to your customers' rsync_id using the API Gateway email endpoint.")
+    
+    # Option to select from existing Enboxes
+    data, error = client.get_enboxes()
+    
+    use_enbox = st.checkbox("📦 Select recipient from existing Enboxes", value=True)
+    
+    with st.form("send_email_form"):
+        if use_enbox and data and not error:
+            enboxes = data.get('enboxes', []) if isinstance(data, dict) else data
+            
+            if enboxes and len(enboxes) > 0:
+                selected_enbox_id = st.selectbox(
+                    "Select Enbox Recipient *",
+                    options=[""] + [enbox.get("id") for enbox in enboxes],
+                    format_func=lambda x: "-- Select an Enbox --" if x == "" else f"{next((e.get('display_name', 'N/A') for e in enboxes if e.get('id') == x), 'N/A')} ({next((e.get('enbox_rsync_id', 'N/A') for e in enboxes if e.get('id') == x), 'N/A')})"
+                )
+                
+                # Get the rsync_id for the selected enbox
+                if selected_enbox_id:
+                    selected_enbox = next((e for e in enboxes if e.get("id") == selected_enbox_id), None)
+                    to_email = selected_enbox.get("enbox_rsync_id", "") if selected_enbox else ""
+                    if to_email:
+                        st.info(f"📬 Email will be sent to: `{to_email}`")
+                else:
+                    to_email = ""
+            else:
+                st.warning("No Enboxes found. Create one first or enter rsync_id manually.")
+                to_email = st.text_input(
+                    "Recipient's rsync_id *",
+                    placeholder="enbox_rsync_id_here",
+                    help="Enter the recipient's rsync_id"
+                )
+        else:
+            to_email = st.text_input(
+                "Recipient's rsync_id *",
+                placeholder="enbox_rsync_id_here",
+                help="Enter the recipient's rsync_id"
+            )
+        
+        subject = st.text_input(
+            "Subject *",
+            placeholder="Email subject line",
+            help="Subject line for the email"
+        )
+        
+        body = st.text_area(
+            "Body *",
+            placeholder="Email content...",
+            help="Email body content",
+            height=200
+        )
+        
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            submitted = st.form_submit_button("📤 Send Email", type="primary", use_container_width=True)
+        
+        if submitted:
+            if not to_email:
+                st.markdown('<div class="error-box">❌ Recipient is required</div>', unsafe_allow_html=True)
+            elif not subject:
+                st.markdown('<div class="error-box">❌ Subject is required</div>', unsafe_allow_html=True)
+            elif not body:
+                st.markdown('<div class="error-box">❌ Body is required</div>', unsafe_allow_html=True)
+            else:
+                with st.spinner("Sending email..."):
+                    result, error = client.send_email(
+                        to=to_email,
+                        subject=subject,
+                        body=body
+                    )
+                    
+                    if error:
+                        st.markdown(f'<div class="error-box">❌ Error sending email: {error}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="success-box">✅ Email sent successfully!</div>', unsafe_allow_html=True)
+                        
+                        # Add to sent emails history
+                        email_record = {
+                            "to": to_email,
+                            "subject": subject,
+                            "body": body,
+                            "timestamp": datetime.now().isoformat(),
+                            "response": result
+                        }
+                        st.session_state.sent_emails.insert(0, email_record)
+                        
+                        # Show response
+                        with st.expander("📋 Response Details"):
+                            st.json(result)
+                        
+                        st.balloons()
+    
+    # Email history
+    if st.session_state.sent_emails:
+        st.markdown("---")
+        st.markdown("### 📨 Recent Emails Sent")
+        
+        for idx, email in enumerate(st.session_state.sent_emails[:5]):  # Show last 5
+            with st.expander(f"📧 {email['subject']} → {email['to'][:20]}... ({email['timestamp'][:19]})"):
+                st.markdown(f"**To:** `{email['to']}`")
+                st.markdown(f"**Subject:** {email['subject']}")
+                st.markdown(f"**Body:**")
+                st.text(email['body'])
+                st.markdown(f"**Sent:** {email['timestamp']}")
+                st.json(email['response'])
+
 def display_statistics(client):
     """Display MSP statistics and usage"""
     st.markdown('<div class="section-header">📊 Statistics & Usage</div>', unsafe_allow_html=True)
@@ -679,14 +825,14 @@ def main():
         st.markdown("### 📚 Navigation")
         page = st.radio(
             "Select Page",
-            ["Dashboard", "Create Enbox", "Manage Enbox", "Statistics"],
+            ["Dashboard", "Create Enbox", "Send Email", "Manage Enbox", "Statistics"],
             label_visibility="collapsed"
         )
         
         st.markdown("---")
         st.markdown("### ℹ️ About")
-        st.caption("MSP API Manager v1.0")
-        st.caption("Manage customer Enboxes programmatically")
+        st.caption("MSP API Manager v1.1")
+        st.caption("Manage customer Enboxes & send emails")
     
     # Initialize API client
     client = MSPAPIClient(st.session_state.api_key)
@@ -698,6 +844,8 @@ def main():
         display_enboxes_list(client)
     elif page == "Create Enbox":
         create_enbox_form(client)
+    elif page == "Send Email":
+        send_email_form(client)
     elif page == "Manage Enbox":
         manage_enbox(client)
     elif page == "Statistics":
