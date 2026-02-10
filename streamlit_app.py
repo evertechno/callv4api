@@ -61,15 +61,16 @@ EMAIL_BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/api-gate
 class MSPAPIClient:
     """Client for MSP API operations"""
     
-    def __init__(self, api_key):
+    def __init__(self, api_key, email_api_key=None):
         self.api_key = api_key
+        self.email_api_key = email_api_key
         self.headers = {
             "Content-Type": "application/json",
             "x-msp-api-key": api_key
         }
         self.email_headers = {
             "Content-Type": "application/json",
-            "x-api-key": api_key
+            "x-api-key": email_api_key if email_api_key else api_key
         }
     
     def test_connection(self):
@@ -241,6 +242,8 @@ def init_session_state():
     """Initialize session state variables"""
     if 'api_key' not in st.session_state:
         st.session_state.api_key = None
+    if 'email_api_key' not in st.session_state:
+        st.session_state.email_api_key = None
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     if 'enboxes_data' not in st.session_state:
@@ -252,17 +255,22 @@ def authenticate():
     """Handle API key authentication from Streamlit secrets only"""
     st.markdown('<div class="main-header">🔐 MSP API Manager</div>', unsafe_allow_html=True)
     
-    # Get API key from secrets only
+    # Get API keys from secrets only
     try:
         api_key = st.secrets["msp_api_key"]
+        email_api_key = st.secrets.get("email_api_key", "")  # Optional, for email endpoint
         
-        st.info(f"API Key loaded: {api_key[:12]}..." if len(api_key) > 12 else "API Key loaded (short)")
+        st.info(f"MSP API Key loaded: {api_key[:12]}..." if len(api_key) > 12 else "MSP API Key loaded (short)")
+        if email_api_key:
+            st.info(f"Email API Key loaded: {email_api_key[:12]}..." if len(email_api_key) > 12 else "Email API Key loaded (short)")
+        else:
+            st.warning("⚠️ Email API Key not found in secrets. Email sending may not work.")
         st.info(f"Base URL: {BASE_URL}")
         
         # Test the connection first
         st.markdown("### 🔍 Testing Connection...")
         
-        client = MSPAPIClient(api_key)
+        client = MSPAPIClient(api_key, email_api_key)
         
         with st.expander("🔧 Debug: Connection Test Results", expanded=True):
             test_results, test_error = client.test_connection()
@@ -298,6 +306,7 @@ def authenticate():
             
         else:
             st.session_state.api_key = api_key
+            st.session_state.email_api_key = email_api_key
             st.session_state.authenticated = True
             st.success("✅ Authentication successful!")
             st.rerun()
@@ -307,9 +316,11 @@ def authenticate():
         st.markdown("""
             <div class="info-box">
             <strong>Setup Instructions:</strong><br><br>
-            Add your MSP API key to Streamlit secrets:<br><br>
+            Add your API keys to Streamlit secrets:<br><br>
             1. Create <code>.streamlit/secrets.toml</code> file<br>
-            2. Add: <code>msp_api_key = "msp_your_key_here"</code><br>
+            2. Add:<br>
+            <code>msp_api_key = "msp_your_key_here"</code><br>
+            <code>email_api_key = "rsk_your_email_api_key_here"</code><br>
             3. Restart the application
             </div>
         """, unsafe_allow_html=True)
@@ -818,6 +829,7 @@ def main():
         if st.button("🔓 Disconnect", use_container_width=True):
             st.session_state.authenticated = False
             st.session_state.api_key = None
+            st.session_state.email_api_key = None
             st.session_state.enboxes_data = None
             st.rerun()
         
@@ -835,7 +847,7 @@ def main():
         st.caption("Manage customer Enboxes & send emails")
     
     # Initialize API client
-    client = MSPAPIClient(st.session_state.api_key)
+    client = MSPAPIClient(st.session_state.api_key, st.session_state.email_api_key)
     
     # Main content
     st.markdown('<div class="main-header">📦 MSP API Manager</div>', unsafe_allow_html=True)
