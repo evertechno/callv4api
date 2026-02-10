@@ -220,23 +220,36 @@ class MSPAPIClient:
                 "body": body
             }
             
-            print(f"DEBUG: Sending email to: {url}")
-            print(f"DEBUG: Payload: {payload}")
+            print(f"\n=== EMAIL SEND DEBUG ===")
+            print(f"URL: {url}")
+            print(f"Headers: {self.email_headers}")
+            print(f"Payload: {payload}")
+            print(f"API Key (first 12 chars): {self.email_api_key[:12] if self.email_api_key else 'MISSING'}")
             
             response = requests.post(
                 url,
                 headers=self.email_headers,
-                json=payload
+                json=payload,
+                timeout=30
             )
             
-            print(f"DEBUG: Response Status: {response.status_code}")
-            print(f"DEBUG: Response Text: {response.text}")
+            print(f"Response Status: {response.status_code}")
+            print(f"Response Headers: {dict(response.headers)}")
+            print(f"Response Text: {response.text}")
+            print(f"======================\n")
+            
+            if response.status_code == 401:
+                error_msg = f"Authentication failed. Please check your email API key. Response: {response.text}"
+                return None, error_msg
             
             response.raise_for_status()
             return response.json(), None
         except requests.exceptions.RequestException as e:
-            print(f"DEBUG: Email Exception: {type(e).__name__}: {str(e)}")
-            return None, str(e)
+            error_detail = f"{type(e).__name__}: {str(e)}"
+            if hasattr(e, 'response') and e.response is not None:
+                error_detail += f" | Response: {e.response.text}"
+            print(f"DEBUG: Email Exception: {error_detail}")
+            return None, error_detail
 
 def init_session_state():
     """Initialize session state variables"""
@@ -505,7 +518,26 @@ def send_email_form(client):
     """Form to send emails"""
     st.markdown('<div class="section-header">📧 Send Email</div>', unsafe_allow_html=True)
     
+    # Check if email API key is configured
+    if not st.session_state.email_api_key:
+        st.error("⚠️ Email API key is not configured. Please add it to your secrets.toml file.")
+        st.markdown("""
+            <div class="info-box">
+            <strong>Required Configuration:</strong><br><br>
+            Add to <code>.streamlit/secrets.toml</code>:<br>
+            <code>email_api_key = "rsk_your_api_key_here"</code><br><br>
+            The API key must be valid and have 'write' or 'send' permissions.
+            </div>
+        """, unsafe_allow_html=True)
+        return
+    
     st.info("💡 Send emails to your customers' rsync_id using the API Gateway email endpoint.")
+    
+    # Show API key info
+    with st.expander("🔑 API Key Information"):
+        st.code(f"Key Prefix: {st.session_state.email_api_key[:8]}")
+        st.caption("The edge function will validate this key against the api_keys table.")
+        st.caption("Required permissions: 'write' or 'send'")
     
     # Option to select from existing Enboxes
     data, error = client.get_enboxes()
@@ -579,6 +611,27 @@ def send_email_form(client):
                     
                     if error:
                         st.markdown(f'<div class="error-box">❌ Error sending email: {error}</div>', unsafe_allow_html=True)
+                        
+                        # Show troubleshooting tips for common errors
+                        if "401" in str(error) or "Unauthorized" in str(error):
+                            st.markdown("""
+                                <div class="info-box">
+                                <strong>Authentication Error - Troubleshooting:</strong><br><br>
+                                1. Verify your email API key is correct in secrets.toml<br>
+                                2. Check if the API key exists in the 'api_keys' table<br>
+                                3. Ensure the API key is active (is_active = true)<br>
+                                4. Verify the API key has 'write' or 'send' permission<br>
+                                5. Check if the key has expired (expires_at field)<br>
+                                6. Confirm the key_prefix and key_hash match in the database
+                                </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Show debug info
+                        with st.expander("🔧 Debug Information"):
+                            st.write("**Endpoint:**", f"{EMAIL_BASE_URL}/emails")
+                            st.write("**API Key Prefix:**", st.session_state.email_api_key[:8] if st.session_state.email_api_key else "N/A")
+                            st.write("**Recipient:**", to_email)
+                            st.write("**Full Error:**", error)
                     else:
                         st.markdown('<div class="success-box">✅ Email sent successfully!</div>', unsafe_allow_html=True)
                         
