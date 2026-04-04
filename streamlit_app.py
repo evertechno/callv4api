@@ -55,8 +55,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # API Configuration
-BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/msp-gateway"
-EMAIL_BASE_URL = "https://plsyktpjiihgrnidisve.supabase.co/functions/v1/api-gateway"
+BASE_URL = "https://vwhxcuylitpawxjplfnq.supabase.co/functions/v1/msp-gateway"
+EMAIL_BASE_URL = "https://vwhxcuylitpawxjplfnq.supabase.co/functions/v1/api-gateway"
 
 class MSPAPIClient:
     """Client for MSP API operations"""
